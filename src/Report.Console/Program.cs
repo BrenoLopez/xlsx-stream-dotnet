@@ -1,14 +1,6 @@
-﻿using Amazon.S3;
-using Amazon.S3.Model;
-
+﻿using Amazon.S3.Model;
 using Microsoft.IO;
-
 using SpreadCheetah;
-
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Threading.Tasks;
 
 class Program
 {
@@ -17,8 +9,8 @@ class Program
     static async Task Main(string[] args)
     {
         string bucketName = "s3-bucket-local";
-        string keyName = "pasta/teste_spreadcheetah_multipart.xlsx";
-        int numberOfSheets = 3; 
+        string keyName = "teste_spreadcheetah_multipart.xlsx";
+        int numberOfSheets = 5; 
 
         var s3Client = new AmazonS3Client("test", "test", new AmazonS3Config
         {
