@@ -1,13 +1,31 @@
-﻿using SpreadCheetah;
+﻿//using SpreadCheetah;
 
-using var fileStream = File.Create("./report.xlsx");
+//using var fileStream = File.Create("./report.xlsx");
 
-using var spreadsheet = await Spreadsheet.CreateNewAsync(fileStream);
+//using var spreadsheet = await Spreadsheet.CreateNewAsync(fileStream);
 
-await spreadsheet.StartWorksheetAsync("Sheet 1");
+//await spreadsheet.StartWorksheetAsync("Sheet 1");
 
-Cell[] row = [new("Lorem ipsum dolor siamet"), new(10)];
+//Cell[] row = [new("Lorem ipsum dolor siamet"), new(10)];
 
-await spreadsheet.AddRowAsync(row);
+//await spreadsheet.AddRowAsync(row);
 
-await spreadsheet.FinishAsync();
+//await spreadsheet.FinishAsync();
+
+using CsvHelper;
+
+using System.Globalization;
+
+using var writer = new StreamWriter("./report.csv");
+
+using var csv = new CsvWriter(writer, CultureInfo.InvariantCulture);
+
+await foreach (var record in GetRecordsAsync()) csv.WriteRecord(record);
+
+static async IAsyncEnumerable<SampleRecord> GetRecordsAsync()
+{
+    await Task.Delay(100);
+    yield return new SampleRecord("Lorem ipsum dolor siamet", 5);
+}
+
+record SampleRecord(string Description, byte Stars);
