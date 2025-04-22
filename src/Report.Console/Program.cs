@@ -1,4 +1,4 @@
-﻿var records = ReportInMemoryRepository.GetRecordsAsync(10_000);
+﻿var records = ReportInMemoryRepository.GetRecordsAsync(1_000_000);
 
 var generator = new ExcelReportGenerator(new AmazonS3Client("test", "test", new AmazonS3Config
 {

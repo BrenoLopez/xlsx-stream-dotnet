@@ -36,16 +36,7 @@ public class ExcelReportGenerator(IAmazonS3 s3Client)
             await foreach (var record in records)
             {
                 Cell[] row = [new(record.Description), new(record.Stars)];
-
                 await spreadsheet.AddRowAsync(row);
-
-                if (stream.Length >= partSize)
-                {
-                    await spreadsheet.FinishAsync();
-                    stream.Position = 0;
-                    partETags.Add(await UploadPartAsync(s3Client, bucketName, fileName, uploadId, partNumber++, stream));
-                    stream.SetLength(0);
-                }
             }
 
             if (stream.Length > 0)
