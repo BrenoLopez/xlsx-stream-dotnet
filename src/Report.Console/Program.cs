@@ -1,5 +1,4 @@
-﻿//Console.WriteLine("Hello, World!");
-using SpreadCheetah;
+﻿using SpreadCheetah;
 
 using var fileStream = File.Create("./report.xlsx");
 
