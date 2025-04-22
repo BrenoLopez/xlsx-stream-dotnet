@@ -1,14 +1,15 @@
-﻿using SpreadCheetah;
+﻿using Microsoft.IO;
+using SpreadCheetah;
 
 namespace Report.Console;
 
 public class ExcelReportGenerator
 {
-    public static async Task GenerateAsync(IAsyncEnumerable<SampleRecord> records)
+    public static async Task<RecyclableMemoryStream> GenerateAsync(IAsyncEnumerable<SampleRecord> records)
     {
-        using var fileStream = File.Create("./report.xlsx");
+        var stream = new RecyclableMemoryStreamManager().GetStream();
 
-        using var spreadsheet = await Spreadsheet.CreateNewAsync(fileStream);
+        var spreadsheet = await Spreadsheet.CreateNewAsync(stream);
 
         await spreadsheet.StartWorksheetAsync("Sheet 1");
 
@@ -19,5 +20,9 @@ public class ExcelReportGenerator
         }
 
         await spreadsheet.FinishAsync();
+
+        stream.Position = 0;
+
+        return stream;  
     }
 }

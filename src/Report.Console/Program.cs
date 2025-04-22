@@ -1,11 +1,11 @@
-﻿using Report.Console;
-
-var records = GetRecordsAsync();
-
-await ExcelReportGenerator.GenerateAsync(records);
-
-static async IAsyncEnumerable<SampleRecord> GetRecordsAsync()
+﻿var uploader = new S3MultipartUploader(new AmazonS3Client("test", "test", new AmazonS3Config
 {
-    await Task.Delay(100);
-    yield return new SampleRecord("Lorem ipsum dolor siamet", 5);
-}
+    ServiceURL = "http://localhost:4566",
+    ForcePathStyle = true,
+}));
+
+var records = ReportInMemoryRepository.GetRecordsAsync(10_000);
+
+await using var stream = await ExcelReportGenerator.GenerateAsync(records);
+
+await uploader.UploadMultipartAsync("s3-bucket-local", "report.xlsx", stream);
