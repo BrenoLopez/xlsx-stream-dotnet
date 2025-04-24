@@ -1,6 +1,9 @@
 ﻿using Amazon.S3.Model;
+
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 using Microsoft.IO;
-using SpreadCheetah;
 
 class Program
 {
@@ -8,114 +11,157 @@ class Program
 
     static async Task Main(string[] args)
     {
-        string bucketName = "s3-bucket-local";
-        string keyName = "teste_spreadcheetah_multipart.xlsx";
-        int numberOfSheets = 5; 
-
         var s3Client = new AmazonS3Client("test", "test", new AmazonS3Config
         {
-            ServiceURL = "http://localhost:4566",
+            ServiceURL = "http://localhost:3000",
             ForcePathStyle = true,
         });
 
-        await CreateAndUploadSpreadsheetMultipartAsync(s3Client, bucketName, keyName, numberOfSheets);
+        var data = ReportInMemoryRepository.GetRecordsAsync(100);
+
+        await GenerateWithOpenXml(s3Client, data);
     }
 
-    static async Task CreateAndUploadSpreadsheetMultipartAsync(IAmazonS3 s3Client, string bucketName, string keyName, int numberOfSheets)
+    public static async Task GenerateWithOpenXml(AmazonS3Client s3Client, IAsyncEnumerable<SampleRecord> data)
     {
-        using var memoryStream = recyclableMemoryStreamManager.GetStream();
-
-        var options = new SpreadCheetahOptions();
-        var spreadsheet = await Spreadsheet.CreateNewAsync(memoryStream, options);
-
-        for (int sheetIndex = 0; sheetIndex < numberOfSheets; sheetIndex++)
-        {
-            await spreadsheet.StartWorksheetAsync($"Sheet{sheetIndex + 1}");
-
-            for (int rowIndex = 0; rowIndex < 1_000_000; rowIndex++)
-            {
-                var row = new Cell[40];
-
-                for (int col = 0; col < 40; col++)
-                {
-                    row[col] = new Cell("test");
-                }
-
-                await spreadsheet.AddRowAsync(row);
-
-                if ((rowIndex + 1) % 10_000 == 0)
-                {
-                    Console.WriteLine($"Sheet {sheetIndex + 1} - linhas escritas: {rowIndex + 1}");
-                }
-            }
-        }
-
-        await spreadsheet.FinishAsync();
-
-        memoryStream.Position = 0;
-
         const int partSize = 5 * 1024 * 1024;
-        var initRequest = new InitiateMultipartUploadRequest
-        {
-            BucketName = bucketName,
-            Key = keyName,
-            ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        };
-
-        var initResponse = await s3Client.InitiateMultipartUploadAsync(initRequest);
-        var uploadId = initResponse.UploadId;
+        const string bucketName = "s3-bucket-local";
+        const string fileName = "teste.xlsx";
         var partETags = new List<PartETag>();
         int partNumber = 1;
 
+        var uploadId = await InitializeMultipartUploadAsync(s3Client, bucketName, fileName);
+
         try
         {
-            byte[] buffer = new byte[partSize];
-            int bytesRead;
-            while ((bytesRead = await memoryStream.ReadAsync(buffer, 0, partSize)) > 0)
+            using var initialStream = recyclableMemoryStreamManager.GetStream();
+            using (var spreadsheet = SpreadsheetDocument.Create(initialStream, SpreadsheetDocumentType.Workbook))
             {
-                using var partStream = new MemoryStream(buffer, 0, bytesRead);
+                var workbookPart = spreadsheet.AddWorkbookPart();
+                workbookPart.Workbook = new Workbook();
+                var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                worksheetPart.Worksheet = new Worksheet(new SheetData());
 
-                var uploadRequest = new UploadPartRequest
+                var sheets = workbookPart.Workbook.AppendChild(new Sheets());
+                sheets.Append(new Sheet()
                 {
-                    BucketName = bucketName,
-                    Key = keyName,
-                    UploadId = uploadId,
-                    PartNumber = partNumber,
-                    InputStream = partStream,
-                    IsLastPart = false,
-                };
-
-                var uploadResponse = await s3Client.UploadPartAsync(uploadRequest);
-
-                partETags.Add(new PartETag(partNumber, uploadResponse.ETag));
-                Console.WriteLine($"Parte {partNumber} enviada, ETag: {uploadResponse.ETag}");
-
-                partNumber++;
+                    Id = workbookPart.GetIdOfPart(worksheetPart),
+                    SheetId = 1,
+                    Name = "Data"
+                });
             }
 
-            var completeRequest = new CompleteMultipartUploadRequest
+            uint rowIndex = 1;
+            using var currentPartStream = recyclableMemoryStreamManager.GetStream();
+
+            initialStream.Position = 0;
+            await initialStream.CopyToAsync(currentPartStream);
+            initialStream.SetLength(0);
+
+            using (var spreadsheet = SpreadsheetDocument.Open(currentPartStream, true))
             {
-                BucketName = bucketName,
-                Key = keyName,
-                UploadId = uploadId,
-                PartETags = partETags
-            };
+                var worksheetPart = spreadsheet.WorkbookPart.WorksheetParts.First();
+                var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
 
-            await s3Client.CompleteMultipartUploadAsync(completeRequest);
+                await foreach (var item in data)
+                {
+                    var row = new Row { RowIndex = rowIndex++ };
+                    row.Append(
+                        new Cell { CellValue = new CellValue(item.Description) },
+                        new Cell { CellValue = new CellValue(item.Stars.ToString()) }
+                    );
+                    sheetData.Append(row);
 
-            Console.WriteLine("Upload multipart completo!");
+                    if (currentPartStream.Length >= partSize)
+                    {
+                        spreadsheet.WorkbookPart.Workbook.Save();
+                        partETags.Add(await UploadPartAsync(
+                            s3Client, bucketName, fileName, uploadId, partNumber++, currentPartStream));
+
+                        currentPartStream.SetLength(0);
+                        initialStream.Position = 0;
+                        await initialStream.CopyToAsync(currentPartStream);
+                    }
+                }
+
+                if (currentPartStream.Length > 0)
+                {
+                    spreadsheet.WorkbookPart.Workbook.Save();
+                    partETags.Add(await UploadPartAsync(
+                        s3Client, bucketName, fileName, uploadId, partNumber++, currentPartStream));
+                }
+            }
+
+            await CompleteMultipartUploadAsync(s3Client, bucketName, fileName, uploadId, partETags);
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"Erro no upload: {ex.Message}");
-            await s3Client.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
-            {
-                BucketName = bucketName,
-                Key = keyName,
-                UploadId = uploadId
-            });
-
+            await AbortMultipartUploadAsync(s3Client, bucketName, fileName, uploadId);
             throw;
         }
+    }
+
+    private static async Task<string> InitializeMultipartUploadAsync(AmazonS3Client s3Client, string bucketName, string fileName)
+    {
+        var initiateRequest = new InitiateMultipartUploadRequest
+        {
+            BucketName = bucketName,
+            Key = fileName
+        };
+
+        var initiateResponse = await s3Client.InitiateMultipartUploadAsync(initiateRequest);
+
+        return initiateResponse.UploadId;
+    }
+
+    private static async Task CompleteMultipartUploadAsync(AmazonS3Client s3Client, string bucketName, string fileName, string uploadId, List<PartETag> parts)
+    {
+
+        var completeRequest = new CompleteMultipartUploadRequest
+        {
+            BucketName = bucketName,
+            Key = fileName,
+            UploadId = uploadId,
+            PartETags = parts
+        };
+        await s3Client.CompleteMultipartUploadAsync(completeRequest);
+    }
+
+    private static async Task AbortMultipartUploadAsync(AmazonS3Client s3Client, string bucketName, string fileName, string uploadId)
+    {
+        var abortRequest = new AbortMultipartUploadRequest
+        {
+            BucketName = bucketName,
+            Key = fileName,
+            UploadId = uploadId
+        };
+        await s3Client.AbortMultipartUploadAsync(abortRequest);
+    }
+
+    public static async Task<PartETag> UploadPartAsync(
+    IAmazonS3 s3Client,
+    string bucketName,
+    string objectKey,
+    string uploadId,
+    int partNumber,
+    Stream stream)
+    {
+        var uploadRequest = new UploadPartRequest
+        {
+            BucketName = bucketName,
+            Key = objectKey,
+            UploadId = uploadId,
+            PartNumber = partNumber,
+            PartSize = stream.Length,
+            InputStream = stream
+        };
+
+        var response = await s3Client.UploadPartAsync(uploadRequest);
+
+        return new PartETag
+        {
+            PartNumber = partNumber,
+            ETag = response.ETag
+        };
     }
 }
