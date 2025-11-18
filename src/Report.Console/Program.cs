@@ -1,8 +1,9 @@
-﻿using Amazon.S3.Model;
+using Amazon.S3.Model;
 
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+
 using Microsoft.IO;
 
 class Program
@@ -13,7 +14,7 @@ class Program
     {
         var s3Client = new AmazonS3Client("test", "test", new AmazonS3Config
         {
-            ServiceURL = "http://localhost:3000",
+            ServiceURL = "http://localhost:4566",
             ForcePathStyle = true,
         });
 

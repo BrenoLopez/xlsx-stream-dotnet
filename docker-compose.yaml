@@ -2,5 +2,5 @@ services:
   localstack-custom:
     image: lilacostaro/localstack-custom
     ports:
-    - "3000:4566"
+    - "4566:4566"
     - "4510-4559:4510-4559"
